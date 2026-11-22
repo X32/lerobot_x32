@@ -4,7 +4,7 @@
 # ⚠️ 必须用 uv run --no-sync：venv 里的 torch 2.8.0+cu126 是为 1080 Ti 特意装的，
 #    裸 uv run 会按 lockfile 同步回 cu132（驱动不认，CUDA 不可用）
 # 预计: ~0.3s/步 × 100000 步 ≈ 8.5 小时；每 20000 步存一个 checkpoint
-# 进度: tail -f outputs/train/act_so101_task1/train.log
+# 进度: tail -f outputs/train_act.log（手册: docs/训练手册.md §1.4）
 # 中断: pkill -f lerobot-train（重跑本脚本加 --resume=true 从最后 checkpoint 续训）
 set -e
 cd /mnt/nvme01/workplace/lerobot
