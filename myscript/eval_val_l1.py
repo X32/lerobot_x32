@@ -12,8 +12,8 @@
     PYTHONPATH= uv run --no-sync python myscript/eval_val_l1.py --ckpt <路径> --max-batches 64
 
 指标口径：
-- eval_loss   : 策略自身损失（ACT = L1 + 10×KL，归一化空间）
-- action_l1   : 归一化动作空间的平均绝对误差（与本 batch 内 action 维度平均）
+- eval_loss   : 策略自身损失（ACT 评估模式只有 L1 项，与 action_l1 数值相同）
+- action_l1   : 归一化动作空间的 masked L1（尾部 padding 不计入），选型主指标
 - 跨运行比较注意：不同数据量训练的 run 归一化统计不同（41/51 条算出的 mean/std
   略有差异），action_l1 跨 run 只做粗对比；最终排序以真机成功率为准。
 """
@@ -31,7 +31,7 @@ from lerobot.policies.act.modeling_act import ACTPolicy
 VAL_REPO_ID = "zihao/so101_task1_val"
 VAL_ROOT = "/mnt/nvme_data/huggingface_cache/lerobot/zihao/so101_task1_split/val"
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True)
 logger = logging.getLogger(__name__)
 
 
@@ -80,13 +80,15 @@ def main() -> None:
             for cam_key in camera_keys:
                 if cam_key in batch and batch[cam_key].dtype == torch.uint8:
                     batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
-            batch = {k: v.to(device) for k, v in batch.items()}
+            batch = {
+                k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()
+            }
             batch = preprocessor(batch)
-            loss, output = policy(batch)
-            pred = output["action"] if isinstance(output, dict) else output.action
-            target = batch["action"]
-            l1 = torch.abs(pred - target).mean().item()
-            sum_loss += loss.item()
+            loss, loss_dict = policy(batch)
+            # ACT 的 forward 返回 (loss, {"l1_loss", "kld_loss"})；评估模式不含 KL，
+            # l1_loss 即 masked、归一化空间的平均绝对误差，直接作为选型指标。
+            l1 = float(loss_dict.get("l1_loss", float(loss)))
+            sum_loss += float(loss)
             sum_l1 += l1
             n_batches += 1
             if args.max_batches and n_batches >= args.max_batches:
