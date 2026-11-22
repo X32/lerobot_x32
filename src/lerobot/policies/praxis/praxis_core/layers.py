@@ -45,7 +45,18 @@ AttentionBackend = Literal["triton", "flash"]
 
 # One compiled flex-attention callable for the whole process. The eager
 # flex_attention falls back to a dense kernel that does not fit long sequences.
-_compiled_flex_attention = torch.compile(flex_attention)
+# Local patch (2026-11-22): guard the module-level torch.compile calls so importing
+# this module on torch builds without the 2.15-only inductor option below (e.g.
+# 2.8.0+cu126 on GTX 1080 Ti) doesn't crash ACT training, which merely imports this
+# package through the policy registry. Falls back to eager flex_attention.
+def _compile_or_eager(fn, **compile_kwargs):
+    try:
+        return torch.compile(fn, **compile_kwargs)
+    except (RuntimeError, ValueError):
+        return fn
+
+
+_compiled_flex_attention = _compile_or_eager(flex_attention)
 # Shape-polymorphic twin for callers whose sequence lengths change from call to
 # call (the action expert in the "flex_dynamic" mode). It has its own compile
 # cache, so its entries do not count against the static one.
@@ -56,7 +67,7 @@ _compiled_flex_attention = torch.compile(flex_attention)
 # so two processes can give outputs that differ in the last bits. The option
 # below makes inductor pick one fixed config by a rule (no benchmark). The
 # original implementation runs with the same option.
-_compiled_flex_attention_dynamic = torch.compile(
+_compiled_flex_attention_dynamic = _compile_or_eager(
     flex_attention,
     dynamic=True,
     options={"test_configs.force_filter_reduction_configs": True},

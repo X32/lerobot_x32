@@ -72,6 +72,20 @@ def main():
         warns.append("存在几乎不动的关节")
 
     print("\n== 视频文件 ==")
+    # 交叉核对：episodes 元数据里引用的每个 (相机, file_index) 视频文件都必须存在
+    # （2026-11-21 实测丢过 third_person/file-002.mp4，元数据指向不存在的文件——
+    #   只遍历现存文件查完整性会漏判这类缺失，必须反向核对）
+    ep_files = sorted((root / "meta/episodes").glob("chunk-*/*.parquet"))
+    if ep_files:
+        ep_df = pd.concat([pd.read_parquet(f) for f in ep_files], ignore_index=True)
+        for col in [c for c in ep_df.columns if c.startswith("videos/") and c.endswith("/file_index")]:
+            feature = col[: -len("/file_index")]  # e.g. videos/observation.images.front
+            cam = feature.split(".")[-1]
+            for fidx in sorted(ep_df[col].unique()):
+                expect = root / feature / f"chunk-{int(ep_df[ep_df[col]==fidx][feature+'/chunk_index'].iloc[0]):03d}" / f"file-{int(fidx):03d}.mp4"
+                if not expect.exists():
+                    print(f"  ❌ 缺文件（元数据引用但不存在）: {expect.relative_to(root)}")
+                    warns.append(f"视频缺失: {cam}/file-{int(fidx):03d}.mp4（覆盖 ep{int(ep_df[ep_df[col]==fidx]['episode_index'].min())}~{int(ep_df[ep_df[col]==fidx]['episode_index'].max())}）")
     for v in sorted((root / "videos").rglob("*.mp4")):
         try:
             dur = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
